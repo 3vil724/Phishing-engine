@@ -1,0 +1,110 @@
+import imaplib                                                    #used to check mailboxes with manual login each time
+import email                                                      #Parses the messy email text into something we can process
+from email.header import decode_header                            #to decode complex texts like emojis or something attackers may use and convert it into english
+import re                                                         #Regex for pattern matching
+import time
+
+from engine import HybridPhishingEngine, EmailPayload            #imporitng our brain and email data structure
+
+class RealTimeListener:
+    def __init__(self, email_address, password, imap_server="imap.gmail.com"):
+        self.email_address=email_address
+        self.password=password
+        self.imap_server=imap_server
+        self.mail = None                                         #Used as placeholder
+
+        self.engine=HybridPhishingEngine()                       #initialising everything
+
+
+    def connect(self):                                           #Connects into the mail server
+        try:
+            print(f"[*] Connecting to {self.imap_server}...")    #[*] here stands for starting a task
+            self.mail = imaplib.IMAP4_SSL(self.imap_server)      #utilises SSL for secure connectivity
+            self.mail.login(self.email_address, self.password)   #logging in
+            print(f"[+] Connected to {self.imap_server}!")       #successful login
+
+        except Exception as e:
+            print(f"[-] Failed to connect to {self.imap_server}")
+            print("    Note: If using Gmail, you must use an 'App Password'...")
+
+    def listen_forever(self):
+        """Creates an infinite loop that checks the inbox every 10 seconds."""
+        if not self.mail:
+            print("[-] Not connected to server. Run connect() first.")
+            return
+
+        self.mail.select("inbox")  # Focus on the main inbox folder
+
+        while True:
+            # Search for emails flagged as "UNSEEN" (Unread)
+            status, messages = self.mail.search(None, "UNSEEN")
+
+            # messages[0] contains a space-separated string of email IDs (e.g., b'1 2 3')
+            email_ids = messages[0].split()
+
+            if email_ids:
+                print(f"[*] Found {len(email_ids)} new unread email(s)!")
+
+                for e_id in email_ids:
+                    # Fetch the email data
+                    _, msg_data = self.mail.fetch(e_id, "(RFC822)")
+
+                    for response_part in msg_data:
+                        if isinstance(response_part, tuple):
+                            # Parse the raw bytes into a readable email object
+                            msg = email.message_from_bytes(response_part[1])
+
+                            # Send it to our custom processor
+                            self._process_email(msg)
+
+            # Wait 10 seconds before checking again so we don't spam the server
+            time.sleep(10)
+
+    
+
+    def _process_email(self, msg):
+        sender=msg.get("From", "Unknown")                        #.get() is used to retrieve values from say a dictionary
+        reply_to=msg.get("Reply-To", sender)
+
+        body_text=""
+        if msg.is_multipart():                                   #.is_multipart to check for html and plaintext part
+            for part in msg.walk():                              #.walk(0 for a ordered traversal through the data structure
+                if part.get_content_type()=="text/plain":
+                    body_text=part.get_payload(decode=True).decode()    #decodes message from the main body
+                    break                                               #stop searching once we find the text
+        else:
+            body_text=msg.get_payload(decode=True)
+
+        urls = re.findall(r'(https?://[^\s]+)', body_text)    #separating links from the email using regex
+
+        payload=EmailPayload(
+            sender=sender,
+            reply_to=reply_to,
+            body_text=body_text,
+            urls=urls,
+            attachments=[]                                           #skipping attachments for now
+        )
+
+        print(f"Analysing email from :{sender}")
+        result=self.engine.evaluate(payload)
+
+        print(f"  Score: {result['final_score']}")
+        print(f"  Classification: {result['classification']}")
+        if result['final_score'] >= 35:
+            print("  [!] WARNING TRIGGERS:")
+            for note in result['audit_trail']:
+                print(f"      - {note}")
+        print("-" * 40 + "\n")
+
+
+#Excecution
+#Warning: dont put real password here
+#Go to your Google Account -> Security -> 2-Step Verification -> App Passwords
+#Generate a 16-letter password and paste it here.
+if __name__=="__main__":
+    EMAIL = "your-test-email@gmail.com"
+    APP_PASSWORD = "abcd efgh ijkl mnop"  # Replace with real app password
+
+    listener = RealTimeListener(EMAIL, APP_PASSWORD)
+    listener.connect()
+    listener.listen_forever()
