@@ -1,0 +1,102 @@
+# If we didn't use this, the AI would re-train itself every single time
+# you clicked a button, making the dashboard painfully slow.
+@st.cache_resource
+def get_engine():
+    return HybridPhishingEngine()
+
+
+engine = get_engine()
+
+# ==========================================
+# 3. The Header Section
+# ==========================================
+# This draws the big title at the top of the webpage.
+st.title("🛡️ Real-Time Phishing Detection Dashboard")
+st.markdown("Enter email details below to simulate the ingestion pipeline and calculate the risk score.")
+st.divider()  # Draws a neat horizontal line
+
+# ==========================================
+# 4. The Input Layout (Left Column & Right Column)
+# ==========================================
+# We split the screen into two columns.
+# col1 is for inputs (Metadata/Links), col2 is for the Email Body text.
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("Email Metadata")
+    # These create text boxes for you to type in.
+    sender_input = st.text_input("Sender Address", "admin@security-paypa1.com")
+    reply_to_input = st.text_input("Reply-To Address", "hacker@yandex.ru")
+    domain_age_input = st.number_input("Domain Age (Days)", value=2)
+
+    st.subheader("Payloads (Comma separated)")
+    # We take the links/files as one long string, then we will split them by commas later.
+    urls_input = st.text_input("URLs", "http://login.secure.paypa1.com/update")
+    attachments_input = st.text_input("Attachments", "invoice.pdf.exe")
+
+with col2:
+    st.subheader("Email Body Content")
+    # Creates a large, multi-line text box for the email message.
+    body_input = st.text_area("Paste Email Text Here",
+                              "Urgent: Your account suspended. Immediate action required.",
+                              height=250)
+
+# ==========================================
+# 5. The "Analyze" Button & Processing
+# ==========================================
+st.divider()
+
+# This creates the big button. The code indented underneath only runs IF the button is clicked.
+if st.button("Analyze Threat Risk", type="primary", use_container_width=True):
+
+    # --- Step A: Format the Input ---
+    # We take the comma-separated strings from the UI and turn them into
+    # clean Python lists so our Engine doesn't crash.
+    url_list = [u.strip() for u in urls_input.split(",") if u.strip()]
+    attachment_list = [a.strip() for a in attachments_input.split(",") if a.strip()]
+
+    # --- Step B: Package it into our Blueprint ---
+    payload = EmailPayload(
+        sender=sender_input,
+        reply_to=reply_to_input,
+        domain_age_days=int(domain_age_input),
+        urls=url_list,
+        attachments=attachment_list,
+        body_text=body_input
+    )
+
+    # --- Step C: Feed it to the Engine! ---
+    result = engine.evaluate(payload)
+
+    # ==========================================
+    # 6. Displaying the Results (The Visuals)
+    # ==========================================
+    st.header("Analysis Results")
+
+    # We split the results area into 3 small columns for a clean look.
+    res_col1, res_col2, res_col3 = st.columns(3)
+
+    # Display the final numerical score as a big metric.
+    res_col1.metric("Total Risk Score", f"{result['final_score']} / 100")
+
+    # Display the ML confidence as a percentage.
+    ml_percent = result['ml_confidence'] * 100
+    res_col2.metric("ML NLP Confidence", f"{ml_percent:.1f}%")
+
+    # Display a colored banner based on the classification.
+    with res_col3:
+        if "Malicious" in result['classification']:
+            st.error(f"🚨 {result['classification']}")  # Red Box
+        elif "Suspicious" in result['classification']:
+            st.warning(f"⚠️ {result['classification']}")  # Yellow Box
+        else:
+            st.success(f"✅ {result['classification']}")  # Green Box
+
+    # Display the Audit Trail
+    st.subheader("Audit Trail (Threat Indicators Triggered)")
+    if not result['audit_trail']:
+        st.info("No suspicious indicators found. Email appears clean.")
+    else:
+        # Loop through the notes our engine took and display them as warnings.
+        for note in result['audit_trail']:
+            st.warning(note, icon="🚩")
