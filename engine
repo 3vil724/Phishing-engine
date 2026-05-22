@@ -1,0 +1,106 @@
+import re                                                              #Regular expression library. We use this to filter suspicious IPs that may belong to scammers
+from urllib.parse import urlparse                                      #Used to separate domains from the rest of the URL
+from dataclasses import dataclass, field                               #Used to create blueprints for the data structures we are to analyse
+from typing import List, Dict, Any                                     #Another library required for data structure creation
+
+from sklearn.feature_extraction.text import TfidfVectorizer            #Machine learning translates english to math
+from sklearn.ensemble import RandomForestClassifier                    #Machine learning to find patterns in that math
+from sklearn.pipeline import make_pipeline                             #Pipeline to make the translator and pattern finder to work together
+
+
+@dataclass                                                             #@dataclass is a shortcut to hold data structures together
+class EmailPayload:
+    sender: str
+    reply_to: str
+    body_text: str
+    urls: List[str] = field(default_factory=list)                     #field(default_factory=list) creates a new list for every email
+    attachments: List[str] = field(default_factory=list)
+    domain_age_days: int = 999                                        #999 is a dummy value that is replaced with the real domain age as checking takes time and leaving it empty till then can crash the program
+
+
+#Machine learning part
+class MLTextClassifier:                                               #Blueprint for the machine learning brain
+    def __init__(self):                                               #__init__(self) runs automatically like a bootup sequence when creating the AI
+        self.model = make_pipeline(                                   #here we create a pipeline so instructions can follow a set sequence
+            TfidfVectorizer(stop_words='english'),             #Ignores the unimportant words and focuses on the important ones translating it into math
+            RandomForestClassifier(n_estimators=100, random_state=42) #creates a 100 micro decision trees to decide if there is phishing involved, 42 is just something to ensure randomness
+        )
+        self._train_dummy_model()                                     #ML is useless unless it trains on data, this command trains it on dummy data to make it good enough for real world applications
+
+
+    def _train_dummy_model(self):                                    #we start the function name with an _ telling other devs the engine teaches itself before going public
+        training_texts = [
+            "Your account suspended. Click here.",  # Phishing
+            "Invoice attached for review.",  # Phishing (in our dummy context)                #this is a list of training data, for now its only this much but its upgradable
+            "Can we reschedule our 1 PM sync?"  # Benign
+        ]
+        training_labels = [1, 1, 0]                                                            #1 stands for phishing, 0 stands for not
+        self.model.fit(training_texts, training_labels)                                        #fit stands for find the pattern
+
+
+    def get_phishing_probability(self, text: str) -> float:                            #function expects the input in str and output in float
+        if not text.strip():                                                           #if the input is empty don't waste the brains energy and return 0 directly
+            return 0.0
+        probabilities = self.model.predict_proba([text])[0]                            #the model checks the random forest decision trees, [0] to pick the first email from 1000s of results preventing confusion
+        return probabilities[1]                                                        #we labelled phishing as 1 before, so we return the score
+
+
+class HybridPhishingEngine:
+    def __init__(self):                                                              #boots up the phishing engine logic
+        self.threshold_suspicious = 35
+        self.threshold_malicious = 50
+
+        self.shortners = ['bit.ly', 'tinyurl.com']                                  #list of services that attackers use to hide the destination of said link
+        self.exec_extensions = ['.exe', '.scr']                                      #high-risk file types
+        self.protected_brands = ['google', 'paypal']                                 #extra attention to established companies
+
+        self.ml_model = MLTextClassifier()                                           #plug in the ML brain
+
+
+    # <--- FIXED: Indented the entire evaluate function to be inside the class
+    def evaluate(self, email):
+        total_score = 0
+        audit_trail = []
+
+        if email.sender.lower() != email.reply_to.lower():
+            total_score += 20
+            audit_trail.append("Header Mismatch (+20)")                                  #add 20 points to audit trail if the sender and reply emails mismatch
+
+
+        for url in email.urls:                                                          #loops through all links within an email
+            domain = urlparse(url).netloc.lower()                                       #stripping the domain from the full url, urlparse ignores http and other unnecessary stuff, and we convert everything to lower case
+
+            for brand in self.protected_brands:
+                if brand in domain and f"{brand}.com" not in domain:                     #checks the link with existing established brands to cross-check authenticity
+                    total_score += 35                                                    #checking for partial matches that isn't perfect thus eradicating impersonation
+                    audit_trail.append(f"Typosquatting on brand '{brand}' (+35)")
+
+
+        for attachment in email.attachments:
+            if any(attachment.lower().endswith(ext) for ext in self.exec_extensions):
+                total_score += 45
+                audit_trail.append(f"Executable Attachment: {attachment} (+45)")         #Checks email attachments for any banned file types like .exe
+
+
+        # <--- FIXED: Indented all of the ML scoring so it sits inside the evaluate function
+        ml_confidence = self.ml_model.get_phishing_probability(email.body_text)
+        ml_score = int(ml_confidence * 30)
+
+        if ml_score > 0:
+            total_score += ml_score
+            audit_trail.append(f"ML NLP Analysis: {ml_confidence:.0%} confident (+{ml_score})")
+
+        # <--- FIXED: Lined up the final classification logic properly
+        classification = "Benign"
+        if total_score >= self.threshold_malicious:
+            classification = "Malicious (Quarantine)"
+        elif total_score >= self.threshold_suspicious:
+            classification = "Suspicious (Warning Banner)"
+
+        return {
+            "final_score": total_score,
+            "classification": classification,
+            "ml_confidence": ml_confidence,
+            "audit_trail": audit_trail
+        }
+
